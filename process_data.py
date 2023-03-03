@@ -4,6 +4,7 @@ import json
 import argparse
 import hashlib
 import base64
+import fileinput
 
 from pathlib import Path
 from decimal import Decimal
@@ -41,7 +42,8 @@ def generate_hash(lineage: dict) -> str:
     * I am unsure if species names may contain non-ASCII characters. I'm
     assuming they can, and am arbitrarily converting them to an utf-8 byte
     representation. The hash string contains only base64 characters
-    * Again, I am letting this crash on missing data
+    * I am letting this crash on missing data, as I expect every species to
+    have complete taxonomic data
     """
     identifier = "|".join([lineage[k] for k in TAXONOMIC_RANK])
     m = hashlib.md5()
@@ -49,23 +51,18 @@ def generate_hash(lineage: dict) -> str:
     return base64.b64encode(m.digest()).decode('utf-8')
 
 
-def parse_csv(filepath: Path) -> list[dict]:
+def reify_row(row_dict: dict) -> None:
     """
-    Notes:
-    * There's not really any error handling here, and it relies on the CSV and
-    data being well formed. I don't really make any attempts at recovery, since
-    we probably want to fail instead of silently ingesting malformed data
+    Converts fields in a raw CSV row_dict into more useful types
+    Parses lineage data into a dict, and string representations of numbers to
+    numerical types
+    Taking a let-it-crash philosophy on missing or incorrectly-typed data,
+    as with the rest of this program
     """
-    with open(filepath) as csvfile:
-        h = csv.DictReader(csvfile)
-        entries = []
-        for entry in h:
-            lineage_rank = entry.get('lineage_rank')
-            if lineage_rank:
-                entry['lineage_rank'] = json.loads(lineage_rank)
-            print(generate_hash(entry['lineage_rank']))
-            entries.append(entry)
-        return entries
+    row_dict['lineage_rank'] = json.loads(row_dict['lineage_rank'])
+    row_dict['read_count'] = int(row_dict['read_count'])
+    row_dict['relative_abundance'] = Decimal(row_dict['relative_abundance'])
+    row_dict['total_filtered_reads'] = int(row_dict['total_filtered_reads'])
 
 
 def main() -> int:
@@ -79,9 +76,21 @@ def main() -> int:
     if dest_dir is None:
         dest_dir = "."
 
-    for filepath in Path(dest_dir).iterdir():
-        if filepath.suffix == ".csv":
-            parse_csv(filepath)
+    filepaths = [f for f in Path(dest_dir).iterdir() if f.suffix == ".csv"]
+    with fileinput.input(files=filepaths) as f:
+        it = csv.DictReader(f)
+        for entry in it:
+            # DictReader will automatically consume the first line of the first
+            # file to generate the dict fields, but treat the rest of the
+            # iterator as data rows. When processing subsequent
+            # files, we need to skip the header
+            if f.filelineno() == 1:
+                continue
+
+            reify_row(entry)
+            print(entry)
+            print(generate_hash(entry['lineage_rank']))
+
     return 1
 
 
