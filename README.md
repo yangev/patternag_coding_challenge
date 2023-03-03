@@ -6,5 +6,6 @@ pip install -r requirements.txt
 ```
 === Usage ===
 ```
-python3 download_data.gcp_.py "patternag-backend-coding-challenge"
+python3 download_data_gcp.py -d data "patternag-backend-coding-challenge"
+python3 process_data.py -d data
 ```
