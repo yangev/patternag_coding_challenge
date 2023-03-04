@@ -3,6 +3,7 @@ import sys
 import json
 import argparse
 import fileinput
+import subprocess
 
 from pathlib import Path
 from decimal import Decimal
@@ -115,20 +116,35 @@ def process_species_data(species_data: dict) -> dict:
     return output_data
 
 
+def upload_to_bucket(bucket_name, output_file):
+    subprocess.run(['gsutil', 'cp', output_file, bucket_name])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog='process_data.py',
                                      description='processes data from a directory')
     parser.add_argument("-d",
                         "--src-dir",
                         help="Source directory of the data")
+    parser.add_argument("-f",
+                        "--output-file",
+                        help="writes the processed data to a file")
+    parser.add_argument("-b",
+                        "--bucket-name",
+                        help="Upload to GCP bucket. If omitted, skip uploading --output-file must also be set")
+
     args = parser.parse_args()
-    dest_dir = args.src_dir
-    if dest_dir is None:
-        dest_dir = "."
+    src_dir, output_file, bucket_name = args.src_dir, args.output_file, args.bucket_name
+    if src_dir is None:
+        src_dir = "."
+
+    if not output_file and bucket_name:
+        print("must set --output-file if --bucket-name is set", file=sys.stderr)
+        return 0
 
     species_data = {}
 
-    filepaths = [f for f in Path(dest_dir).iterdir() if f.suffix == ".csv"]
+    filepaths = [f for f in Path(src_dir).iterdir() if f.suffix == ".csv"]
     with fileinput.input(files=filepaths) as f:
         it = csv.DictReader(f)
         for row_dict in it:
@@ -142,8 +158,13 @@ def main() -> int:
             reify_row(row_dict)
             process_row(species_data, row_dict)
     output_data = process_species_data(species_data)
-    as_json = json.dumps(output_data, indent=2)
-    print(as_json)
+    as_json = json.dumps(output_data)
+    if output_file:
+        with open(output_file, 'w') as f:
+            print(as_json, file=f)
+    if bucket_name:
+        upload_to_bucket(bucket_name, output_file)
+
     return 1
 
 
