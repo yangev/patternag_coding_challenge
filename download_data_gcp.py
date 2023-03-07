@@ -1,8 +1,33 @@
 import sys
 import argparse
+import signal
 from google.cloud import storage
-from google.cloud.storage.retry import DEFAULT_RETRY
 from pathlib import Path
+
+
+def exponential_retry(func, args=[], kwargs={}, starting_timeout=1, max_retries=5):
+    """
+    Notes:
+    This is super hacky, creating and receiving a unix SIGALRM as the timer
+    mechanism. This also doesn't make any attempt cleanly terminate the
+    blocking function call
+    """
+    def timeoutHandler(signum, frame):
+        raise TimeoutError
+    signal.signal(signal.SIGALRM, timeoutHandler)
+    retry_count = 0
+    while True:
+        try:
+            signal.alarm(starting_timeout)
+            func(*args, **kwargs)
+            signal.alarm(0)
+            break
+        except TimeoutError:
+            starting_timeout *= 2
+            retry_count += 1
+            if retry_count > max_retries:
+                break
+            continue
 
 
 def main() -> int:
@@ -26,6 +51,7 @@ def main() -> int:
                         help="Destination to store files")
     parser.add_argument("bucket_name",
                         help="Bare name of the Google Cloud Storage bucket")
+
     args = parser.parse_args()
     bucket_name = args.bucket_name
     dest_dir = args.dest_dir
@@ -36,7 +62,7 @@ def main() -> int:
     blobs = storage_client.list_blobs(bucket_name)
     for blob in blobs:
         filepath = Path(dest_dir, blob.name)
-        blob.download_to_filename(filepath, retry=DEFAULT_RETRY)
+        exponential_retry(blob.download_to_filename, [filepath], {'retry': None})
 
     return 0
 
